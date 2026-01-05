@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">ESP32OnlineSwitch</string>
+    <string name="main_activity_connect_status_OK">已连接</string>
+    <string name="main_activity_connect_status_NO">未连接</string>
+    <string name="main_activity_connect_status_CON">正在连接</string>
+
+    <string name="main_activity_button_open_light">开灯</string>
+    <string name="main_activity_button_close_light">关灯</string>
+</resources>
