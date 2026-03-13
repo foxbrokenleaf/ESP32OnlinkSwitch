@@ -54,7 +54,7 @@ uint8_t getAlarmCount();
 void checkAndExecuteAlarms();
 void executeTask(TaskType taskType, uint8_t alarmId = 255);
 String taskTypeToString(TaskType taskType);
-String getAlarmListString();
+String getAlarmListString(int i, bool *first);
 
 // FLASH存储函数
 void saveAlarmsToFlash();
@@ -71,6 +71,7 @@ void sendDataFrame(const uint8_t* data, uint8_t length);
 void executeRelayOn();
 void executeRelayOff();
 void executeRelayToggle();
+void executeRelayState();
 void executeGetStatus();
 void executeTimeSend();
 void executeTimeRecv();
@@ -113,7 +114,7 @@ typedef struct {
 
 // ========== 全局变量 ==========
 
-bool relayState = false;
+bool relayState = true;
 SimpleRTC rtc;
 AlarmTask alarmList[MAX_ALARMS];
 uint8_t nextAlarmId = 0;
@@ -565,28 +566,25 @@ String taskTypeToString(TaskType taskType) {
 }
 
 // 获取闹钟列表字符串
-String getAlarmListString() {
+String getAlarmListString(int i, bool *first) {
     String listStr = "ALARM_LIST:";
-    bool first = true;
     
-    for (int i = 0; i < MAX_ALARMS; i++) {
-        if (alarmList[i].enabled && alarmList[i].taskType != TASK_NONE) {
-            if (!first) listStr += ";";
-            first = false;
-            
-            listStr += "#";
-            listStr += String(i);
-            listStr += "=";
-            listStr += String(alarmList[i].hour);
-            listStr += ":";
-            listStr += String(alarmList[i].minute);
-            listStr += ":";
-            listStr += String(alarmList[i].second);
-            listStr += "-";
-            listStr += taskTypeToString(alarmList[i].taskType);
-            listStr += "-";
-            listStr += alarmList[i].enabled ? "ENABLED" : "DISABLED";
-        }
+    if (alarmList[i].enabled && alarmList[i].taskType != TASK_NONE) {
+        if (!*first) listStr += ";";
+        *first = false;
+        
+        listStr += "#";
+        listStr += String(i);
+        listStr += "=";
+        listStr += String(alarmList[i].hour);
+        listStr += ":";
+        listStr += String(alarmList[i].minute);
+        listStr += ":";
+        listStr += String(alarmList[i].second);
+        listStr += "-";
+        listStr += taskTypeToString(alarmList[i].taskType);
+        listStr += "-";
+        listStr += alarmList[i].enabled ? "ENABLED" : "DISABLED";
     }
     
     if (first) {
@@ -623,6 +621,8 @@ void handleTaskRun(uint8_t* data, uint8_t length) {
         executeRelayToggle();
     } else if (command == "GET_STATUS") {
         executeGetStatus();
+    } else if (command == "RELAY_STATE"){
+      executeRelayState();
     } else if (command == "TIME_SEND") {
         executeTimeSend();
     } else if (command == "TIME_RECV") {
@@ -712,7 +712,10 @@ void executeGetAlarms() {
     
     uint8_t alarmCount = getAlarmCount();
     String response = "ALARMS_COUNT:" + String(alarmCount);
-    response += " LIST:" + getAlarmListString();
+    for(int i = 0;i < MAX_ALARMS;i++){
+      bool first = true;
+      response += " LIST:" + getAlarmListString(i, &first);
+    }
     
     sendResponse(response);
 }
@@ -832,7 +835,7 @@ void executeGetTime() {
 void executeRelayOn() {
     Serial.println("【执行】打开继电器");
     digitalWrite(RELAY_PIN, LOW);
-    relayState = true;
+    relayState = false;
     
     String response = "RELAY_ON_OK";
     sendResponse(response);
@@ -842,7 +845,7 @@ void executeRelayOn() {
 void executeRelayOff() {
     Serial.println("【执行】关闭继电器");
     digitalWrite(RELAY_PIN, HIGH);
-    relayState = false;
+    relayState = true;
     
     String response = "RELAY_OFF_OK";
     sendResponse(response);
@@ -851,11 +854,17 @@ void executeRelayOff() {
 // 任务: 切换继电器
 void executeRelayToggle() {
     Serial.println("【执行】切换继电器");
+    
     relayState = !relayState;
     digitalWrite(RELAY_PIN, relayState ? HIGH : LOW);
     
-    String response = "RELAY_TOGGLE_OK:" + String(relayState ? "ON" : "OFF");
+    String response = "RELAY_TOGGLE_OK:" + String(relayState ? "OFF" : "ON");
     sendResponse(response);
+}
+
+void executeRelayState(){
+  String response = "RELAY=" + String(relayState ? "OFF" : "ON");
+  sendResponse(response);
 }
 
 // 任务: 获取状态
@@ -863,7 +872,7 @@ void executeGetStatus() {
     Serial.println("【执行】获取设备状态");
     
     String response = "STATUS:";
-    response += "RELAY=" + String(relayState ? "ON" : "OFF") + ",";
+    response += "RELAY=" + String(relayState ? "OFF" : "ON") + ",";
     response += "TIME=" + getSimpleTimeString() + ",";
     response += "ALARMS=" + String(getAlarmCount()) + ",";
     response += "UPTIME=" + String(getTotalSeconds()) + "s";
@@ -927,6 +936,7 @@ void sendDataFrame(const uint8_t* data, uint8_t length) {
     // 校验和
     frame[idx++] = checksum;
     
+    Serial.write(frame,idx);
     SerialBT.write(frame, idx);
     SerialBT.flush();
 }
@@ -940,6 +950,7 @@ void setup() {
     // 初始化引脚
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, HIGH);  // 初始状态关闭继电器
+    relayState = digitalRead(RELAY_PIN);
     
     // 初始化RTC
     initSimpleRTC();
@@ -950,10 +961,12 @@ void setup() {
     Serial.println("========================");
     Serial.println("ESP32 RTC闹钟系统已启动");
     Serial.println("设备名称: FBL-BedLight-Switch");
+    Serial.print("继电器状态: ");
+    Serial.println(relayState ? "OFF" : "ON");
     Serial.println("支持的命令:");
     Serial.println("  基础命令:");
     Serial.println("    RELAY_ON, RELAY_OFF, RELAY_TOGGLE");
-    Serial.println("    GET_STATUS, RESTART");
+    Serial.println("    GET_STATUS, RESTART, RELAY_STATE");
     Serial.println("  时间命令:");
     Serial.println("    TIME_SEND - 发送当前时间");
     Serial.println("    TIME_RECV - 请求设置时间");
@@ -966,6 +979,8 @@ void setup() {
     Serial.println("    DELETE_ALARM=ID - 删除闹钟");
     Serial.println("    CLEAR_ALARMS - 清除所有闹钟");
     Serial.println("========================");
+
+    executeGetStatus();
 }
 
 void loop() {
@@ -1011,11 +1026,7 @@ void loop() {
                 calculated_checksum += data_ptr[i];
             }
             
-            if (calculated_checksum == received_checksum) {
-                handleTaskRun(data_ptr, dataLength);
-            } else {
-                Serial.println("校验和错误");
-            }
+            handleTaskRun(data_ptr, dataLength);
             
             // 重置接收状态
             rx_index = 0;
